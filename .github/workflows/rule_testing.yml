@@ -1,0 +1,30 @@
+name: Test Minder Rules
+
+on:
+  pull_request:
+    paths:
+      - 'rules/**'
+
+jobs:
+  test-rules:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install mindev CLI
+        run: |
+          git clone https://github.com/mindersec/minder.git
+          cd minder
+          make build
+          sudo cp bin/mindev /usr/local/bin/
+
+      - name: Run Test Fixtures
+        # Discovers all *_test.yaml files and evaluates them using the offline framework
+        run: |
+          find ./rules -name "*_test.yaml" | xargs -I {} mindev ruletype test -t {}
