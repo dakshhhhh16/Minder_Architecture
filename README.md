@@ -29,3 +29,11 @@ During the LFX term, these components will be integrated directly into the `mind
 2. Implement the `Mocking Layer` utilizing `http.RoundTripper` and `go-billy`/`go-git`.
 3. Add the `-t` flag to evaluate all test cases in batch.
 4. Migrate the top 20-25 priority community rules to use this new framework.
+
+## Local Execution (Planned)
+
+Once integrated, fixtures can be executed locally using:
+
+```bash
+mindev ruletype test -t rules/sample_rule_test.yaml
+```
