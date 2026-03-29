@@ -1,4 +1,4 @@
-# Minder Rule Testing Framework (LFX Mentorship 2026)
+# Minder Rule Testing Framework
 
 This repository contains a sample implementation of the offline rule testing and CI framework for Minder security policies, proposed for the LFX Mentorship period.
 
