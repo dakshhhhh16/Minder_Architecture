@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -176,8 +177,13 @@ test_cases:
 }
 
 func TestParse_SampleFixtureFile(t *testing.T) {
-	// Parse the actual sample fixture shipped in the repo.
-	f, err := Parse("../../rules/sample_rule_test.yaml")
+	// Derive repo root from the source file location so this test
+	// works regardless of the working directory.
+	_, filename, _, _ := runtime.Caller(0)
+	root := filepath.Join(filepath.Dir(filename), "..", "..")
+	path := filepath.Join(root, "rules", "sample_rule_test.yaml")
+
+	f, err := Parse(path)
 	if err != nil {
 		t.Fatalf("parsing sample fixture: %v", err)
 	}

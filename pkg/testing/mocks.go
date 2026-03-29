@@ -22,6 +22,7 @@ func (m *MockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 			StatusCode: mockResp.StatusCode,
 			Body:       io.NopCloser(bytes.NewBufferString(mockResp.Body)),
 			Header:     make(http.Header),
+			Request:    req,
 		}, nil
 	}
 
@@ -29,5 +30,6 @@ func (m *MockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 	return &http.Response{
 		StatusCode: 404,
 		Body:       io.NopCloser(bytes.NewBufferString(`{"error": "mock data not found"}`)),
+		Request:    req,
 	}, nil
 }
