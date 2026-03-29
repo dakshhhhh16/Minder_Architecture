@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2026 The Minder Authors
+// SPDX-License-Identifier: Apache-2.0
+
 package testing
 
 import (
@@ -37,8 +40,9 @@ type TestCase struct {
 
 // ProviderMockConfig holds mocked data for REST APIs, Git FS, or Data Sources.
 type ProviderMockConfig struct {
-	HTTPResponses map[string]HTTPResponseMock `yaml:"http_responses,omitempty"`
-	GitFiles      map[string]string           `yaml:"git_files,omitempty"`
+	HTTPResponses       map[string]HTTPResponseMock `yaml:"http_responses,omitempty"`
+	GitFiles            map[string]string           `yaml:"git_files,omitempty"`
+	DataSourceResponses map[string]HTTPResponseMock `yaml:"data_source_responses,omitempty"`
 }
 
 // HTTPResponseMock represents a single canned HTTP response.
