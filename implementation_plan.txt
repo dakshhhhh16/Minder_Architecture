@@ -1,0 +1,122 @@
+Implementation Plan
+
+The goal is to make Minder rule testing fast, offline, and automated. Right now, testing
+a rule requires a live GitHub token and makes real network calls. By the end of this
+project, anyone can test a rule by writing a small YAML file and running one command,
+with no internet access needed.
+
+---
+
+Phase 1: Research (Weeks 1-2)
+
+Read through the existing test command and the rule engine to understand exactly where
+network calls happen and what data the engine needs. Audit the community rules and sort
+them into three buckets: rules that call REST APIs, rules that scan git files, and rules
+that need git history or branch metadata. The third bucket is the tricky one. It gets
+flagged for later rather than blocking everything else.
+
+---
+
+Phase 2: Design (Weeks 3-4)
+
+Write a short design document (1-2 pages) covering the fixture file format, how the
+mocking layer plugs into the engine without touching production code, and the new
+--fixture flag for the dev CLI. Note that -t is already taken by the token flag, so
+the new flag has no short form.
+
+No code is written until the mentor signs off on this document.
+
+A fixture file for one rule looks like this:
+
+    version: v1
+    rule_name: osps-vm-05
+    test_cases:
+      - name: "Pass when SECURITY.md exists with 'report'"
+        expect: pass
+        mock_data:
+          git_files:
+            "SECURITY.md": "Please report vulnerabilities here."
+
+      - name: "Fail when no security file and reporting disabled"
+        expect: fail
+        mock_data:
+          git_files:
+            "README.md": "Just a normal readMe."
+          http_responses:
+            "https://api.github.com/repos/owner/repo/vulnerability-alerts":
+              status_code: 404
+              body: '{"message": "Not Found"}'
+
+---
+
+Phase 3: Build the Framework (Weeks 5-8)
+
+Build the fixture parser and the mocking layer together.
+
+Fixture format (YAML):
+  - version: v1
+  - rule_name: the rule being tested
+  - test_cases: a list of named cases, each saying whether it should pass or fail,
+    and what fake data the engine should see (mock files, mock API responses)
+  - skip_reason: an optional field for cases that need git history. Marks them as
+    skipped with a note instead of failing
+
+Mocking layer, three pieces:
+  1. HTTP mock: intercepts REST API calls and returns pre-written responses from the
+     fixture instead of hitting GitHub
+  2. Data source mock: same idea but kept separate so REST mocks and data source
+     mocks do not interfere with each other
+  3. Git mock: returns an in-memory file system pre-populated from the fixture instead
+     of cloning a real repository
+
+The core function that wires all three mocks together for a single test case is
+BuildMocks. The rule engine receives these mocks instead of live providers:
+
+    func BuildMocks(tc TestCase) (*TestCaseMocks, error) {
+        fs, err := NewMockBillyFS(tc.MockData.GitFiles)
+        if err != nil {
+            return nil, fmt.Errorf("building git filesystem for %q: %w", tc.Name, err)
+        }
+        return &TestCaseMocks{
+            HTTPClient:       &http.Client{Transport: NewMockRoundTripper(tc.MockData.HTTPResponses)},
+            DataSourceClient: &http.Client{Transport: NewMockRoundTripper(tc.MockData.DataSourceResponses)},
+            GitCloner:        &MockGitCloner{fs: fs},
+            GitFilesystem:    fs,
+        }, nil
+    }
+
+A DryRun helper validates a fixture file (checks URLs are valid, checks files are
+readable) without needing the full rule engine. This is useful for CI even before
+the --fixture flag is wired into the CLI.
+
+Unit tests are written alongside each piece.
+
+---
+
+Phase 4: CI and Rule Migration (Weeks 9-10)
+
+Write a GitHub Actions workflow with two jobs:
+  - One runs the unit tests on every pull request
+  - One runs DryRun on every fixture file to catch broken fixtures early
+
+Migrate the top 20-25 most-used community rules to the new format, with at least
+one passing test case and one failing test case each. Rules that need git history
+get a fixture file with skip_reason set and a tracking issue so the community can
+finish them later.
+
+---
+
+Phase 5: Quality Check (Week 11)
+
+Verify that every migrated fixture runs with zero real network calls. Test the full
+CI workflow on a fork before opening the final pull request.
+
+---
+
+Phase 6: Documentation (Week 12)
+
+Write:
+  - A fixture format reference with examples for all three ingestion types
+  - A migration guide showing how to convert the old three-file test setup
+    (rule-type + entity + profile) into a single fixture file
+  - Updated CLI docs for the --fixture flag

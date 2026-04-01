@@ -4,9 +4,13 @@ on:
   pull_request:
     paths:
       - 'rules/**'
+      - 'pkg/**'
+      - 'go.mod'
+      - 'go.sum'
 
 jobs:
-  test-rules:
+  unit-tests:
+    name: Unit Tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -15,16 +19,34 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Run fixture parser and mock tests
+        run: go test ./... -v -count=1 -race
+
+  validate-fixtures:
+    name: Validate Rule Fixtures
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
 
       - name: Install mindev CLI
-        run: |
-          git clone https://github.com/mindersec/minder.git
-          cd minder
-          make build
-          sudo cp bin/mindev /usr/local/bin/
+        # NOTE: -t / --token is already taken by rttst.go.  Once the
+        # --fixture flag is merged upstream, replace the go test invocation
+        # below with:
+        #   find ./rules -name "*_test.yaml" | xargs -I{} mindev ruletype test --fixture {}
+        run: go install github.com/mindersec/minder/cmd/dev@latest
 
-      - name: Run Test Fixtures
-        # Discovers all *_test.yaml files and evaluates them using the offline framework
+      - name: Parse all fixture files (offline validation)
+        # Until --fixture lands in mindev, run the fixture parser directly as a
+        # Go test so every *_test.yaml under rules/ is parsed and validated.
         run: |
-          find ./rules -name "*_test.yaml" | xargs -I {} mindev ruletype test -t {}
+          go test ./pkg/testing/... -v -count=1 -run TestParse_SampleFixtureFile

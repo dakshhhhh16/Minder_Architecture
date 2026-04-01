@@ -1,26 +1,111 @@
+// SPDX-FileCopyrightText: Copyright 2026 The Minder Authors
+// SPDX-License-Identifier: Apache-2.0
+
 package testing
+
+import (
+	"errors"
+	"fmt"
+	"os"
+
+	"gopkg.in/yaml.v3"
+)
+
+// SupportedVersion is the only fixture schema version accepted by the parser.
+const SupportedVersion = "v1"
+
+// Sentinel errors returned by Parse.
+var (
+	ErrEmptyPath       = errors.New("fixture path must not be empty")
+	ErrMissingVersion  = errors.New("fixture version is required")
+	ErrUnsupportedVer  = errors.New("unsupported fixture version")
+	ErrMissingRuleName = errors.New("rule_name is required")
+	ErrNoTestCases     = errors.New("at least one test_case is required")
+	ErrInvalidExpect   = errors.New("expect must be \"pass\" or \"fail\"")
+	ErrMissingCaseName = errors.New("test case name is required")
+)
 
 // Fixture defines the top-level schema for a multi-case rule test.
 type Fixture struct {
-	Version   string     `yaml:"version" validate:"required,eq=v1"`
-	RuleName  string     `yaml:"rule_name" validate:"required"`
-	TestCases []TestCase `yaml:"test_cases" validate:"required,dive,required"`
+	Version   string     `yaml:"version"`
+	RuleName  string     `yaml:"rule_name"`
+	TestCases []TestCase `yaml:"test_cases"`
 }
 
 // TestCase outlines a specific evaluation branch and the expected result.
 type TestCase struct {
-	Name     string             `yaml:"name" validate:"required"`
-	Expect   string             `yaml:"expect" validate:"required,oneof=pass fail"`
-	MockData ProviderMockConfig `yaml:"mock_data" validate:"required"`
+	Name       string             `yaml:"name"`
+	Expect     string             `yaml:"expect"`
+	// SkipReason, when non-empty, causes the test runner to skip this case
+	// and print the reason.  Use this for rules that require git commit history
+	// or branch metadata that cannot yet be represented in a static memfs.
+	SkipReason string             `yaml:"skip_reason,omitempty"`
+	MockData   ProviderMockConfig `yaml:"mock_data"`
 }
 
 // ProviderMockConfig holds mocked data for REST APIs, Git FS, or Data Sources.
 type ProviderMockConfig struct {
-	HTTPResponses map[string]HTTPResponseMock `yaml:"http_responses,omitempty"`
-	GitFiles      map[string]string           `yaml:"git_files,omitempty"`
+	HTTPResponses       map[string]HTTPResponseMock `yaml:"http_responses,omitempty"`
+	GitFiles            map[string]string           `yaml:"git_files,omitempty"`
+	DataSourceResponses map[string]HTTPResponseMock `yaml:"data_source_responses,omitempty"`
 }
 
+// HTTPResponseMock represents a single canned HTTP response.
 type HTTPResponseMock struct {
 	StatusCode int    `yaml:"status_code"`
 	Body       string `yaml:"body"`
+}
+
+// Parse reads a YAML fixture file from disk, deserialises it, and runs
+// structural validation.  It returns a ready-to-use Fixture or an error
+// describing the first validation failure.
+func Parse(path string) (*Fixture, error) {
+	if path == "" {
+		return nil, ErrEmptyPath
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading fixture %s: %w", path, err)
+	}
+
+	var f Fixture
+	if err := yaml.Unmarshal(data, &f); err != nil {
+		return nil, fmt.Errorf("unmarshalling fixture: %w", err)
+	}
+
+	if err := f.validate(); err != nil {
+		return nil, err
+	}
+
+	return &f, nil
+}
+
+// validate checks every invariant the schema requires.
+func (f *Fixture) validate() error {
+	if f.Version == "" {
+		return ErrMissingVersion
+	}
+	if f.Version != SupportedVersion {
+		return fmt.Errorf("%w: got %q, want %q", ErrUnsupportedVer, f.Version, SupportedVersion)
+	}
+	if f.RuleName == "" {
+		return ErrMissingRuleName
+	}
+	if len(f.TestCases) == 0 {
+		return ErrNoTestCases
+	}
+	for i, tc := range f.TestCases {
+		if tc.Name == "" {
+			return fmt.Errorf("test_cases[%d]: %w", i, ErrMissingCaseName)
+		}
+		// Skipped cases do not need an expect value; the runner will never evaluate them.
+		if tc.SkipReason != "" {
+			continue
+		}
+		if tc.Expect != "pass" && tc.Expect != "fail" {
+			return fmt.Errorf("test_cases[%d] %q: %w: got %q", i, tc.Name, ErrInvalidExpect, tc.Expect)
+		}
+	}
+	return nil
 }

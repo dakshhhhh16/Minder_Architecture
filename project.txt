@@ -1,0 +1,26 @@
+Minder 2026
+Active Terms
+Summer 2026
+Program Overview
+
+This proposal outlines a 12-week mentorship program focused on significantly enhancing the rule testing and Continuous Integration (CI) tooling for Minder's security policies. The project will primarily involve the go programming language, with secondary exposure to rego, python, and shell scripting. The successful completion of this project will provide Minder users with a robust, automated, and maintainable framework for ensuring the quality and correctness of custom security rules.
+
+
+
+This opportunity is open for a single mentee with some previous GitHub and medium-sized project experience.
+
+
+
+Program Goals
+
+The primary goals of this 12-week engagement are to:
+
+
+
+Improve Rule Testing Tools: Develop a standalone testing command for Minder rules.
+Robust Testing: Allow for the definition and execution of multiple distinct test cases against a single rule.
+Focus on Local Execution: Tests should be able to execute locally without requiring network access to external resources.
+Support Diverse Data Ingestion: Design the framework to accommodate tests for rules covering all current data ingestion methods: REST API, Git repositories, and declared data sources.
+Provide Automated CI Tooling: Implement CI workflows to automatically detect and run tests.
+Update Existing Rules: Migrate and update existing tests within the github.com/mindersec/minder-rules-and-profiles repository to utilize the new framework.
+Documentation and UX: Create documentation for the new tooling and address potential client-side UX issues related to testing.
