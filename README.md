@@ -12,57 +12,79 @@ This repository contains a working prototype of the offline rule testing and CI 
 ## Running the Tests
 
 ```bash
-go test ./... -v
+go test ./... -v -count=1 -race
 ```
 
-All 11 tests pass with zero network calls.
+All 32 tests pass with zero network calls and the race detector enabled.
 
 ## Repository Structure
 
 ```text
 .
 ├── .github/workflows/
-│   └── rule_testing.yml         # CI pipeline to automatically test rules
+│   └── rule_testing.yml         # CI: unit-tests job + validate-fixtures job
 ├── go.mod                       # github.com/dakshhhhh16/Minder_Architecture
 ├── pkg/testing/
-│   ├── fixture.go               # YAML schema parser, Parse() & validation
-│   ├── fixture_test.go          # 11 unit tests for the fixture parser
-│   └── mocks.go                 # Offline mock wrappers for v1.REST & v1.Git
+│   ├── fixture.go               # YAML schema parser, Parse(), validation, SkipReason
+│   ├── fixture_test.go          # 12 unit tests for the fixture parser (all parallel)
+│   ├── mocks.go                 # MockRoundTripper, MockGitCloner, NewMockBillyFS,
+│   │                            # GitCloner interface, TestCaseMocks, BuildMocks
+│   ├── mocks_test.go            # 13 unit tests covering all mock types
+│   ├── runner.go                # Result, DryRun, verifyGitFiles, verifyURLs
+│   └── runner_test.go           # 7 unit tests for DryRun
 └── rules/
     └── sample_rule_test.yaml    # Example of a multi-case fixture
 ```
 
+## Integration Points (for Minder merge)
+
+| Component | Injection point | Mock |
+|-----------|----------------|------|
+| REST providers | `restHandler.testOnlyTransport` | `MockRoundTripper` from `http_responses` |
+| Declared data sources | `restHandler.testOnlyTransport` (separate instance) | `MockRoundTripper` from `data_source_responses` |
+| Git ingester | `interfaces.GitProvider` passed to `git.New()` | `MockGitCloner` (returns `memfs` from `git_files`) |
+
+The new CLI flag is `--fixture` (no short form — `-t` is already the token flag).
+
 ## Test Results
 
-All tests pass on the fixture parser:
-
 ```
-$ go test ./... -v -count=1
+$ go test ./... -v -count=1 -race
 
-=== RUN   TestParse_ValidFixture
---- PASS: TestParse_ValidFixture (0.00s)
-=== RUN   TestParse_EmptyPath
---- PASS: TestParse_EmptyPath (0.00s)
-=== RUN   TestParse_FileNotFound
---- PASS: TestParse_FileNotFound (0.00s)
-=== RUN   TestParse_UnsupportedVersion
---- PASS: TestParse_UnsupportedVersion (0.00s)
-=== RUN   TestParse_MissingVersion
---- PASS: TestParse_MissingVersion (0.00s)
-=== RUN   TestParse_MissingRuleName
---- PASS: TestParse_MissingRuleName (0.00s)
-=== RUN   TestParse_NoTestCases
---- PASS: TestParse_NoTestCases (0.00s)
-=== RUN   TestParse_InvalidExpect
---- PASS: TestParse_InvalidExpect (0.00s)
-=== RUN   TestParse_MissingCaseName
---- PASS: TestParse_MissingCaseName (0.00s)
-=== RUN   TestParse_HTTPMockData
---- PASS: TestParse_HTTPMockData (0.00s)
-=== RUN   TestParse_SampleFixtureFile
---- PASS: TestParse_SampleFixtureFile (0.00s)
+--- PASS: TestParse_ValidFixture
+--- PASS: TestParse_EmptyPath
+--- PASS: TestParse_FileNotFound
+--- PASS: TestParse_UnsupportedVersion
+--- PASS: TestParse_MissingVersion
+--- PASS: TestParse_MissingRuleName
+--- PASS: TestParse_NoTestCases
+--- PASS: TestParse_InvalidExpect
+--- PASS: TestParse_MissingCaseName
+--- PASS: TestParse_HTTPMockData
+--- PASS: TestParse_SkipReason_RelaxesExpectValidation
+--- PASS: TestParse_SampleFixtureFile
+--- PASS: TestMockRoundTripper_HitURL
+--- PASS: TestMockRoundTripper_MissURL_Returns404
+--- PASS: TestMockRoundTripper_NilResponses_Safe
+--- PASS: TestMockRoundTripper_MultipleURLs
+--- PASS: TestNewMockBillyFS_FileExists
+--- PASS: TestNewMockBillyFS_EmptyMap
+--- PASS: TestNewMockBillyFS_MultipleFiles
+--- PASS: TestNewMockBillyFS_MissingFile_ReturnsError
+--- PASS: TestBuildMocks_WiresHTTPAndGit
+--- PASS: TestBuildMocks_EmptyMockData
+--- PASS: TestMockGitCloner_Clone_ReturnsPrepopulatedFS
+--- PASS: TestMockGitCloner_Clone_IgnoresURLAndBranch
+--- PASS: TestBuildMocks_DataSourceClientIsIndependent
+--- PASS: TestDryRun_ValidFixture_AllPass
+--- PASS: TestDryRun_SkippedCasesReported
+--- PASS: TestDryRun_BadFixturePath_ReturnsError
+--- PASS: TestDryRun_InvalidFixtureContent_ReturnsError
+--- PASS: TestDryRun_InvalidURL_ReturnsResultError
+--- PASS: TestDryRun_DataSourceURLValidated
+--- PASS: TestDryRun_SampleFixtureFile
 PASS
-ok      github.com/dakshhhhh16/Minder_Architecture/pkg/testing  0.851s
+ok      github.com/dakshhhhh16/Minder_Architecture/pkg/testing
 ```
 
 ## Integration Roadmap
