@@ -9,7 +9,15 @@ This repository contains a working prototype of the offline rule testing and CI 
 - **Robust Schema Validation**: Fixtures use a mandatory `version` field; the parser rejects unknown versions with a clear error.
 - **Automated CI Integration**: A plug-and-play GitHub Actions workflow to evaluate all rules against their test cases automatically on every PR.
 
-## Project Structure
+## Running the Tests
+
+```bash
+go test ./... -v
+```
+
+All 11 tests pass with zero network calls.
+
+## Repository Structure
 
 ```text
 .
@@ -57,15 +65,15 @@ PASS
 ok      github.com/dakshhhhh16/Minder_Architecture/pkg/testing  0.851s
 ```
 
-## Upcoming LFX Term Objectives
+## Integration Roadmap
 1. Integrate the `Fixture Parser` into `cmd/dev/app/rule_type/rttst.go`.
 2. Implement the `Mocking Layer` utilizing `http.RoundTripper` and `go-billy`/`go-git`.
 3. Add the `-t` flag to evaluate all test cases in batch.
 4. Migrate the top 20-25 priority community rules to use this new framework.
 
-## Local Execution (Planned)
+## Local Execution
 
-Once integrated, fixtures can be executed locally using:
+Once integrated into the Minder CLI, fixtures run with:
 
 ```bash
 mindev ruletype test -t rules/sample_rule_test.yaml
