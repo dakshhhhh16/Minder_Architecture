@@ -20,6 +20,7 @@ func writeTempFixture(t *testing.T, content string) string {
 }
 
 func TestParse_ValidFixture(t *testing.T) {
+	t.Parallel()
 	yaml := `
 version: v1
 rule_name: osps-vm-05
@@ -57,6 +58,7 @@ test_cases:
 }
 
 func TestParse_EmptyPath(t *testing.T) {
+	t.Parallel()
 	_, err := Parse("")
 	if !errors.Is(err, ErrEmptyPath) {
 		t.Errorf("expected ErrEmptyPath, got %v", err)
@@ -64,6 +66,7 @@ func TestParse_EmptyPath(t *testing.T) {
 }
 
 func TestParse_FileNotFound(t *testing.T) {
+	t.Parallel()
 	_, err := Parse("/tmp/does_not_exist_fixture.yaml")
 	if err == nil {
 		t.Fatal("expected error for missing file, got nil")
@@ -71,6 +74,7 @@ func TestParse_FileNotFound(t *testing.T) {
 }
 
 func TestParse_UnsupportedVersion(t *testing.T) {
+	t.Parallel()
 	yaml := `
 version: v99
 rule_name: some-rule
@@ -85,6 +89,7 @@ test_cases:
 }
 
 func TestParse_MissingVersion(t *testing.T) {
+	t.Parallel()
 	yaml := `
 rule_name: some-rule
 test_cases:
@@ -92,12 +97,13 @@ test_cases:
     expect: pass
 `
 	_, err := Parse(writeTempFixture(t, yaml))
-	if !errors.Is(err, ErrUnsupportedVer) {
-		t.Errorf("expected ErrUnsupportedVer for empty version, got %v", err)
+	if !errors.Is(err, ErrMissingVersion) {
+		t.Errorf("expected ErrMissingVersion for empty version, got %v", err)
 	}
 }
 
 func TestParse_MissingRuleName(t *testing.T) {
+	t.Parallel()
 	yaml := `
 version: v1
 test_cases:
@@ -111,6 +117,7 @@ test_cases:
 }
 
 func TestParse_NoTestCases(t *testing.T) {
+	t.Parallel()
 	yaml := `
 version: v1
 rule_name: some-rule
@@ -123,6 +130,7 @@ test_cases: []
 }
 
 func TestParse_InvalidExpect(t *testing.T) {
+	t.Parallel()
 	yaml := `
 version: v1
 rule_name: some-rule
@@ -137,6 +145,7 @@ test_cases:
 }
 
 func TestParse_MissingCaseName(t *testing.T) {
+	t.Parallel()
 	yaml := `
 version: v1
 rule_name: some-rule
@@ -150,6 +159,7 @@ test_cases:
 }
 
 func TestParse_HTTPMockData(t *testing.T) {
+	t.Parallel()
 	yaml := `
 version: v1
 rule_name: api-check
@@ -176,7 +186,30 @@ test_cases:
 	}
 }
 
+func TestParse_SkipReason_RelaxesExpectValidation(t *testing.T) {
+	t.Parallel()
+	// A case with skip_reason set must not fail validation even if expect is
+	// empty, because the runner will never evaluate it.
+	yaml := `
+version: v1
+rule_name: some-rule
+test_cases:
+  - name: "normal case"
+    expect: pass
+  - name: "skipped case"
+    skip_reason: "requires git commit history, not yet supported"
+`
+	f, err := Parse(writeTempFixture(t, yaml))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if f.TestCases[1].SkipReason == "" {
+		t.Error("expected skip_reason to be set on second case")
+	}
+}
+
 func TestParse_SampleFixtureFile(t *testing.T) {
+	t.Parallel()
 	// Derive repo root from the source file location so this test
 	// works regardless of the working directory.
 	_, filename, _, _ := runtime.Caller(0)
