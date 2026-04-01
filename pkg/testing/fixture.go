@@ -16,12 +16,13 @@ const SupportedVersion = "v1"
 
 // Sentinel errors returned by Parse.
 var (
-	ErrEmptyPath        = errors.New("fixture path must not be empty")
-	ErrUnsupportedVer   = errors.New("unsupported fixture version")
-	ErrMissingRuleName  = errors.New("rule_name is required")
-	ErrNoTestCases      = errors.New("at least one test_case is required")
-	ErrInvalidExpect    = errors.New("expect must be \"pass\" or \"fail\"")
-	ErrMissingCaseName  = errors.New("test case name is required")
+	ErrEmptyPath       = errors.New("fixture path must not be empty")
+	ErrMissingVersion  = errors.New("fixture version is required")
+	ErrUnsupportedVer  = errors.New("unsupported fixture version")
+	ErrMissingRuleName = errors.New("rule_name is required")
+	ErrNoTestCases     = errors.New("at least one test_case is required")
+	ErrInvalidExpect   = errors.New("expect must be \"pass\" or \"fail\"")
+	ErrMissingCaseName = errors.New("test case name is required")
 )
 
 // Fixture defines the top-level schema for a multi-case rule test.
@@ -33,9 +34,13 @@ type Fixture struct {
 
 // TestCase outlines a specific evaluation branch and the expected result.
 type TestCase struct {
-	Name     string             `yaml:"name"`
-	Expect   string             `yaml:"expect"`
-	MockData ProviderMockConfig `yaml:"mock_data"`
+	Name       string             `yaml:"name"`
+	Expect     string             `yaml:"expect"`
+	// SkipReason, when non-empty, causes the test runner to skip this case
+	// and print the reason.  Use this for rules that require git commit history
+	// or branch metadata that cannot yet be represented in a static memfs.
+	SkipReason string             `yaml:"skip_reason,omitempty"`
+	MockData   ProviderMockConfig `yaml:"mock_data"`
 }
 
 // ProviderMockConfig holds mocked data for REST APIs, Git FS, or Data Sources.
@@ -78,6 +83,9 @@ func Parse(path string) (*Fixture, error) {
 
 // validate checks every invariant the schema requires.
 func (f *Fixture) validate() error {
+	if f.Version == "" {
+		return ErrMissingVersion
+	}
 	if f.Version != SupportedVersion {
 		return fmt.Errorf("%w: got %q, want %q", ErrUnsupportedVer, f.Version, SupportedVersion)
 	}
@@ -90,6 +98,10 @@ func (f *Fixture) validate() error {
 	for i, tc := range f.TestCases {
 		if tc.Name == "" {
 			return fmt.Errorf("test_cases[%d]: %w", i, ErrMissingCaseName)
+		}
+		// Skipped cases do not need an expect value; the runner will never evaluate them.
+		if tc.SkipReason != "" {
+			continue
 		}
 		if tc.Expect != "pass" && tc.Expect != "fail" {
 			return fmt.Errorf("test_cases[%d] %q: %w: got %q", i, tc.Name, ErrInvalidExpect, tc.Expect)
