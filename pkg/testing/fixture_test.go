@@ -8,7 +8,6 @@ import (
 	"testing"
 )
 
-// helper writes content to a temp file and returns the path.
 func writeTempFixture(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -188,8 +187,6 @@ test_cases:
 
 func TestParse_SkipReason_RelaxesExpectValidation(t *testing.T) {
 	t.Parallel()
-	// A case with skip_reason set must not fail validation even if expect is
-	// empty, because the runner will never evaluate it.
 	yaml := `
 version: v1
 rule_name: some-rule
@@ -210,8 +207,6 @@ test_cases:
 
 func TestParse_SampleFixtureFile(t *testing.T) {
 	t.Parallel()
-	// Derive repo root from the source file location so this test
-	// works regardless of the working directory.
 	_, filename, _, _ := runtime.Caller(0)
 	root := filepath.Join(filepath.Dir(filename), "..", "..")
 	path := filepath.Join(root, "rules", "sample_rule_test.yaml")

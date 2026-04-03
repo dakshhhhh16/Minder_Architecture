@@ -6,7 +6,7 @@ test_cases:
     mock_data:
       git_files:
         "SECURITY.md": "Please report vulnerabilities here."
-        
+
   - name: "Pass when GitHub private reporting is enabled"
     expect: pass
     mock_data:
@@ -19,7 +19,7 @@ test_cases:
     expect: fail
     mock_data:
       git_files:
-        "README.md": "Just a normal readMe."
+        "README.md": "Just a normal readme."
       http_responses:
         "https://api.github.com/repos/owner/repo/vulnerability-alerts":
           status_code: 404
