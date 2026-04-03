@@ -95,7 +95,6 @@ func TestDryRun_BadFixturePath_ReturnsError(t *testing.T) {
 
 func TestDryRun_InvalidFixtureContent_ReturnsError(t *testing.T) {
 	t.Parallel()
-	// Missing version — Parse will fail.
 	yaml := `
 rule_name: some-rule
 test_cases:
@@ -110,7 +109,6 @@ test_cases:
 
 func TestDryRun_InvalidURL_ReturnsResultError(t *testing.T) {
 	t.Parallel()
-	// A relative URL (no scheme/host) should fail URL verification.
 	yaml := `
 version: v1
 rule_name: some-rule

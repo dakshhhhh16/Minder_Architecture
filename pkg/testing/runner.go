@@ -10,34 +10,20 @@ import (
 	"github.com/go-git/go-billy/v5"
 )
 
-// Result captures the outcome of one test case during a DryRun.
+// Result captures the outcome of one test case in a DryRun.
 type Result struct {
-	// Name is the test case name from the fixture.
-	Name string
-
-	// Skipped is true when the case has a non-empty skip_reason.
-	Skipped bool
-
-	// SkipReason is the verbatim skip_reason value from the fixture.
+	Name       string
+	Skipped    bool
 	SkipReason string
-
-	// Err is non-nil when mock construction or verification failed.
-	// A nil Err with Skipped == false means the case is ready for engine injection.
-	Err error
+	Err        error
 }
 
-// DryRun parses the fixture at fixturePath, builds offline mocks for every
-// non-skipped test case, and verifies that:
-//   - all declared git files are readable in the constructed filesystem, and
-//   - all declared HTTP and data-source URLs are syntactically valid.
+// DryRun parses a fixture, builds mocks for every non-skipped case, and
+// checks that all declared git files are readable and all URLs are valid.
 //
-// It does NOT invoke the Minder rule engine.  That integration happens in
-// cmd/dev/app/rule_type/rttst.go once the --fixture flag is added.  DryRun
-// is suitable as a standalone CI step to catch malformed fixtures before
-// mindev integration is complete.
-//
-// Returns one Result per test case, or an error if the fixture itself cannot
-// be parsed.
+// It does NOT invoke the rule engine — that happens once the --fixture flag
+// is wired into cmd/dev/app/rule_type/rttst.go. DryRun is useful as a
+// standalone CI step to catch broken fixtures early.
 func DryRun(fixturePath string) ([]Result, error) {
 	f, err := Parse(fixturePath)
 	if err != nil {
@@ -77,9 +63,8 @@ func DryRun(fixturePath string) ([]Result, error) {
 	return results, nil
 }
 
-// verifyGitFiles opens each declared path in the built filesystem to confirm
-// it was written correctly.  This catches mismatches between the fixture YAML
-// and the in-memory filesystem construction early, before rule engine injection.
+// verifyGitFiles opens each file in the mock filesystem to confirm it was
+// written correctly.
 func verifyGitFiles(fs billy.Filesystem, files map[string]string) error {
 	for path := range files {
 		f, err := fs.Open(path)
@@ -91,9 +76,8 @@ func verifyGitFiles(fs billy.Filesystem, files map[string]string) error {
 	return nil
 }
 
-// verifyURLs checks that every URL key in the provided response maps is a
-// syntactically valid absolute URL.  This catches typos in fixture files that
-// would silently cause the mock to return 404 for every request.
+// verifyURLs checks that every URL key in the response maps is a valid
+// absolute URL. Catches typos that would silently cause 404s.
 func verifyURLs(maps ...map[string]HTTPResponseMock) error {
 	for _, m := range maps {
 		for rawURL := range m {
