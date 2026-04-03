@@ -11,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// SupportedVersion is the only fixture schema version accepted by the parser.
+// SupportedVersion is the only fixture schema version the parser accepts.
 const SupportedVersion = "v1"
 
 // Sentinel errors returned by Parse.
@@ -25,40 +25,37 @@ var (
 	ErrMissingCaseName = errors.New("test case name is required")
 )
 
-// Fixture defines the top-level schema for a multi-case rule test.
+// Fixture is the top-level schema for a multi-case rule test file.
 type Fixture struct {
 	Version   string     `yaml:"version"`
 	RuleName  string     `yaml:"rule_name"`
 	TestCases []TestCase `yaml:"test_cases"`
 }
 
-// TestCase outlines a specific evaluation branch and the expected result.
+// TestCase describes one evaluation scenario and its expected outcome.
 type TestCase struct {
 	Name       string             `yaml:"name"`
 	Expect     string             `yaml:"expect"`
-	// SkipReason, when non-empty, causes the test runner to skip this case
-	// and print the reason.  Use this for rules that require git commit history
-	// or branch metadata that cannot yet be represented in a static memfs.
 	SkipReason string             `yaml:"skip_reason,omitempty"`
 	MockData   ProviderMockConfig `yaml:"mock_data"`
 }
 
-// ProviderMockConfig holds mocked data for REST APIs, Git FS, or Data Sources.
+// ProviderMockConfig holds mock data for REST APIs, Git files, or Data Sources.
 type ProviderMockConfig struct {
 	HTTPResponses       map[string]HTTPResponseMock `yaml:"http_responses,omitempty"`
 	GitFiles            map[string]string           `yaml:"git_files,omitempty"`
 	DataSourceResponses map[string]HTTPResponseMock `yaml:"data_source_responses,omitempty"`
 }
 
-// HTTPResponseMock represents a single canned HTTP response.
+// HTTPResponseMock is a canned HTTP response used by the mock transport.
 type HTTPResponseMock struct {
 	StatusCode int    `yaml:"status_code"`
 	Body       string `yaml:"body"`
 }
 
-// Parse reads a YAML fixture file from disk, deserialises it, and runs
-// structural validation.  It returns a ready-to-use Fixture or an error
-// describing the first validation failure.
+// Parse reads a YAML fixture from disk and validates its structure.
+// Returns a Fixture ready for use, or an error describing the first
+// validation failure.
 func Parse(path string) (*Fixture, error) {
 	if path == "" {
 		return nil, ErrEmptyPath
@@ -81,7 +78,7 @@ func Parse(path string) (*Fixture, error) {
 	return &f, nil
 }
 
-// validate checks every invariant the schema requires.
+// validate checks every required invariant.
 func (f *Fixture) validate() error {
 	if f.Version == "" {
 		return ErrMissingVersion
@@ -99,7 +96,7 @@ func (f *Fixture) validate() error {
 		if tc.Name == "" {
 			return fmt.Errorf("test_cases[%d]: %w", i, ErrMissingCaseName)
 		}
-		// Skipped cases do not need an expect value; the runner will never evaluate them.
+		// Skipped cases don't need an expect value.
 		if tc.SkipReason != "" {
 			continue
 		}
