@@ -18,20 +18,17 @@ import (
 // HTTP mocking
 // ---------------------------------------------------------------------------
 
-// MockRoundTripper intercepts outbound HTTP requests and returns pre-defined
-// responses declared in a fixture file.  Use NewMockRoundTripper to construct
-// one; do not initialise ExpectedResponses directly.
-//
-// Integration note: assign an instance to restHandler.testOnlyTransport in
-// internal/datasources/rest/handler.go to mock both REST provider calls
-// (http_responses) and declared data source calls (data_source_responses).
-// Use separate instances for each so the two mock sets remain independent.
+// MockRoundTripper serves pre-defined responses for outbound HTTP requests.
+// It implements http.RoundTripper and is meant to be injected into
+// restHandler.testOnlyTransport — one instance for REST provider calls
+// (http_responses) and a separate one for Data Source calls
+// (data_source_responses).
 type MockRoundTripper struct {
 	ExpectedResponses map[string]HTTPResponseMock
 }
 
-// NewMockRoundTripper returns a MockRoundTripper pre-loaded with responses.
-// Passing nil is safe and results in a tripper that returns 404 for every URL.
+// NewMockRoundTripper creates a MockRoundTripper loaded with the given
+// responses. Passing nil is safe — every URL will get a 404.
 func NewMockRoundTripper(responses map[string]HTTPResponseMock) *MockRoundTripper {
 	if responses == nil {
 		responses = make(map[string]HTTPResponseMock)
@@ -39,16 +36,15 @@ func NewMockRoundTripper(responses map[string]HTTPResponseMock) *MockRoundTrippe
 	return &MockRoundTripper{ExpectedResponses: responses}
 }
 
-// RoundTrip implements http.RoundTripper.  It serves the canned response whose
-// key matches the full request URL, or a 404 JSON body if no match is found.
-// The unmatched URL is included in the 404 body to simplify fixture debugging.
+// RoundTrip serves the canned response matching the request URL, or returns
+// a 404 with the unmatched URL in the body (useful for debugging fixtures).
 func (m *MockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
 	urlStr := req.URL.String()
 
 	hdr := make(http.Header)
 	hdr.Set("Content-Type", "application/json")
 
-	if mockResp, exists := m.ExpectedResponses[urlStr]; exists {
+	if mockResp, ok := m.ExpectedResponses[urlStr]; ok {
 		return &http.Response{
 			StatusCode: mockResp.StatusCode,
 			Body:       io.NopCloser(bytes.NewBufferString(mockResp.Body)),
@@ -71,9 +67,8 @@ func (m *MockRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) 
 // ---------------------------------------------------------------------------
 
 // NewMockBillyFS builds an in-memory billy.Filesystem pre-populated with the
-// provided files.  Each map key is the file path; the value is its content.
-// This is compatible with the go-git/go-billy interface used by Minder's Git
-// provider, enabling rule evaluation without cloning a real repository.
+// given files. Compatible with the go-billy interface used by Minder's Git
+// provider, so rules can be evaluated without cloning a real repo.
 func NewMockBillyFS(files map[string]string) (billy.Filesystem, error) {
 	fs := memfs.New()
 	for path, content := range files {
@@ -92,63 +87,47 @@ func NewMockBillyFS(files map[string]string) (billy.Filesystem, error) {
 	return fs, nil
 }
 
-// GitCloner is the subset of Minder's interfaces.GitProvider needed for
-// offline testing.  In the main codebase this maps to:
+// GitCloner is the interface we need from Minder's GitProvider for offline
+// testing. In the real codebase this maps to:
 //
 //	pkg/engine/v1/interfaces.GitProvider.Clone(ctx, url, branch) (*git.Repository, error)
 //
-// The prototype simplifies the return type to billy.Filesystem so it can be
-// tested without importing go-git.  During Minder integration, replace this
-// interface with the real interfaces.GitProvider and update MockGitCloner.Clone
-// to initialise a *git.Repository from memory storage backed by the memfs.
+// The prototype simplifies the return to billy.Filesystem. During integration,
+// replace this with interfaces.GitProvider and have MockGitCloner return a
+// *git.Repository backed by memory storage.
 type GitCloner interface {
-	// Clone returns a filesystem representing the repository at cloneURL on
-	// the given branch.  Mock implementations ignore both arguments and return
-	// the pre-populated in-memory filesystem.
 	Clone(ctx context.Context, cloneURL, branch string) (billy.Filesystem, error)
 }
 
-// MockGitCloner implements GitCloner using a pre-populated in-memory
-// filesystem.  It is constructed by BuildMocks; do not initialise directly.
+// MockGitCloner always returns a pre-populated in-memory filesystem,
+// ignoring the URL and branch arguments.
 type MockGitCloner struct {
 	fs billy.Filesystem
 }
 
-// Clone ignores cloneURL and branch and returns the pre-populated filesystem,
-// enabling fully offline rule evaluation for git_files-based test cases.
+// Clone returns the pre-populated filesystem regardless of arguments.
 func (m *MockGitCloner) Clone(_ context.Context, _, _ string) (billy.Filesystem, error) {
 	return m.fs, nil
 }
 
 // ---------------------------------------------------------------------------
-// Unified mock set
+// Wiring layer
 // ---------------------------------------------------------------------------
 
-// TestCaseMocks holds all offline mocks wired for a single test case.
-// After calling BuildMocks, inject the fields into the rule engine components:
-//   - HTTPClient.Transport     → restHandler.testOnlyTransport (REST providers)
-//   - DataSourceClient.Transport → restHandler.testOnlyTransport (data sources)
-//   - GitCloner                → git ingester in place of the live GitProvider
-//   - GitFilesystem            → direct billy.Filesystem access if needed
+// TestCaseMocks holds all offline mocks for a single test case. After calling
+// BuildMocks, inject these into the rule engine:
+//   - HTTPClient.Transport     -> restHandler.testOnlyTransport (REST providers)
+//   - DataSourceClient.Transport -> restHandler.testOnlyTransport (Data Sources)
+//   - GitCloner                -> git ingester replacing the live GitProvider
+//   - GitFilesystem            -> direct filesystem access if needed
 type TestCaseMocks struct {
-	// HTTPClient is pre-configured with MockRoundTripper for http_responses.
-	HTTPClient *http.Client
-
-	// DataSourceClient is pre-configured with MockRoundTripper for
-	// data_source_responses.  Kept separate from HTTPClient so REST provider
-	// mocks and declared data source mocks do not interfere.
+	HTTPClient       *http.Client
 	DataSourceClient *http.Client
-
-	// GitCloner returns the pre-populated in-memory filesystem on Clone().
-	// Assign it to the git ingester in place of the live GitProvider.
-	GitCloner GitCloner
-
-	// GitFilesystem is the underlying billy.Filesystem for direct access.
-	GitFilesystem billy.Filesystem
+	GitCloner        GitCloner
+	GitFilesystem    billy.Filesystem
 }
 
-// BuildMocks constructs all offline mocks for the given test case and returns
-// them ready for injection into the rule engine.
+// BuildMocks constructs all offline mocks for a test case.
 func BuildMocks(tc TestCase) (*TestCaseMocks, error) {
 	fs, err := NewMockBillyFS(tc.MockData.GitFiles)
 	if err != nil {

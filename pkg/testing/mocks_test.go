@@ -10,8 +10,6 @@ import (
 	"testing"
 )
 
-// ---------- MockRoundTripper ----------
-
 func TestMockRoundTripper_HitURL(t *testing.T) {
 	t.Parallel()
 	rt := NewMockRoundTripper(map[string]HTTPResponseMock{
@@ -37,7 +35,7 @@ func TestMockRoundTripper_HitURL(t *testing.T) {
 
 func TestMockRoundTripper_MissURL_Returns404(t *testing.T) {
 	t.Parallel()
-	rt := NewMockRoundTripper(nil) // empty map
+	rt := NewMockRoundTripper(nil)
 
 	req := &http.Request{URL: mustParseURL(t, "https://api.github.com/repos/missing")}
 	resp, err := rt.RoundTrip(req)
@@ -54,7 +52,6 @@ func TestMockRoundTripper_MissURL_Returns404(t *testing.T) {
 
 func TestMockRoundTripper_NilResponses_Safe(t *testing.T) {
 	t.Parallel()
-	// Constructing with nil must not panic on lookup.
 	rt := NewMockRoundTripper(nil)
 	if rt.ExpectedResponses == nil {
 		t.Error("ExpectedResponses should be initialised to non-nil map")
@@ -188,7 +185,7 @@ func TestBuildMocks_WiresHTTPAndGit(t *testing.T) {
 		t.Error("GitFilesystem must not be nil")
 	}
 
-	// Verify the HTTP client is correctly wired.
+	// Verify the HTTP client serves the mocked response.
 	req, _ := http.NewRequest(http.MethodGet, "https://api.github.com/repos/o/r", nil)
 	resp, err := mocks.HTTPClient.Do(req)
 	if err != nil {
@@ -198,7 +195,7 @@ func TestBuildMocks_WiresHTTPAndGit(t *testing.T) {
 		t.Errorf("http status = %d, want 200", resp.StatusCode)
 	}
 
-	// Verify the git filesystem is correctly wired.
+	// Verify the git filesystem has the expected file.
 	f, err := mocks.GitFilesystem.Open("SECURITY.md")
 	if err != nil {
 		t.Fatalf("opening SECURITY.md from git fs: %v", err)
@@ -256,7 +253,6 @@ func TestMockGitCloner_Clone_IgnoresURLAndBranch(t *testing.T) {
 	fs, _ := NewMockBillyFS(map[string]string{"README.md": "hello"})
 	cloner := &MockGitCloner{fs: fs}
 
-	// Different URLs and branches must all return the same pre-populated FS.
 	for _, args := range []struct{ url, branch string }{
 		{"https://github.com/a/b", "main"},
 		{"https://github.com/c/d", "develop"},
@@ -272,7 +268,7 @@ func TestMockGitCloner_Clone_IgnoresURLAndBranch(t *testing.T) {
 	}
 }
 
-// ---------- BuildMocks — DataSourceClient ----------
+// ---------- DataSourceClient independence ----------
 
 func TestBuildMocks_DataSourceClientIsIndependent(t *testing.T) {
 	t.Parallel()
@@ -294,21 +290,21 @@ func TestBuildMocks_DataSourceClientIsIndependent(t *testing.T) {
 		t.Fatalf("BuildMocks: %v", err)
 	}
 
-	// HTTPClient must serve http_responses but 404 for data source URLs.
+	// HTTPClient should 404 on data source URLs.
 	req, _ := http.NewRequest(http.MethodGet, "https://ds.example.com/data", nil)
 	resp, _ := mocks.HTTPClient.Do(req)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("HTTPClient served DS URL: status = %d, want 404", resp.StatusCode)
 	}
 
-	// DataSourceClient must serve data_source_responses but 404 for HTTP provider URLs.
+	// DataSourceClient should 404 on REST provider URLs.
 	req2, _ := http.NewRequest(http.MethodGet, "https://api.github.com/repos/o/r", nil)
 	resp2, _ := mocks.DataSourceClient.Do(req2)
 	if resp2.StatusCode != http.StatusNotFound {
 		t.Errorf("DataSourceClient served HTTP provider URL: status = %d, want 404", resp2.StatusCode)
 	}
 
-	// DataSourceClient must serve its own URL correctly.
+	// DataSourceClient should serve its own URL.
 	req3, _ := http.NewRequest(http.MethodGet, "https://ds.example.com/data", nil)
 	resp3, _ := mocks.DataSourceClient.Do(req3)
 	if resp3.StatusCode != 200 {
