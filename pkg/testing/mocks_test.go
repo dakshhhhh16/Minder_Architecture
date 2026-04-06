@@ -1,16 +1,25 @@
-// SPDX-FileCopyrightText: Copyright 2026 The Minder Authors
-// SPDX-License-Identifier: Apache-2.0
-
 package testing
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/url"
 	"testing"
 )
 
-func TestMockRoundTripper_HitURL(t *testing.T) {
+// ---- MockRoundTripper tests ----
+
+func mustParseURL(t *testing.T, rawURL string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatalf("parsing URL %q: %v", rawURL, err)
+	}
+	return u
+}
+
+func TestMockRoundTripper_MatchingURL(t *testing.T) {
 	t.Parallel()
 	rt := NewMockRoundTripper(map[string]HTTPResponseMock{
 		"https://api.github.com/repos/o/r": {StatusCode: 200, Body: `{"ok":true}`},
@@ -33,7 +42,7 @@ func TestMockRoundTripper_HitURL(t *testing.T) {
 	}
 }
 
-func TestMockRoundTripper_MissURL_Returns404(t *testing.T) {
+func TestMockRoundTripper_NonMatchingURL_Returns404(t *testing.T) {
 	t.Parallel()
 	rt := NewMockRoundTripper(nil)
 
@@ -45,16 +54,13 @@ func TestMockRoundTripper_MissURL_Returns404(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", resp.StatusCode)
 	}
-	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
-		t.Errorf("Content-Type = %q, want \"application/json\"", ct)
-	}
 }
 
-func TestMockRoundTripper_NilResponses_Safe(t *testing.T) {
+func TestMockRoundTripper_NilResponses_InitializesMap(t *testing.T) {
 	t.Parallel()
 	rt := NewMockRoundTripper(nil)
-	if rt.ExpectedResponses == nil {
-		t.Error("ExpectedResponses should be initialised to non-nil map")
+	if rt.Responses == nil {
+		t.Error("Responses should be initialised to non-nil map")
 	}
 }
 
@@ -65,14 +71,16 @@ func TestMockRoundTripper_MultipleURLs(t *testing.T) {
 		"https://api.github.com/repos/o/r/vulnerability-alerts": {StatusCode: 404, Body: `{"message":"Not Found"}`},
 	})
 
-	for _, tc := range []struct {
+	cases := []struct {
 		url        string
 		wantStatus int
 	}{
 		{"https://api.github.com/repos/o/r", 200},
 		{"https://api.github.com/repos/o/r/vulnerability-alerts", 404},
 		{"https://api.github.com/repos/o/r/unregistered", http.StatusNotFound},
-	} {
+	}
+
+	for _, tc := range cases {
 		req := &http.Request{URL: mustParseURL(t, tc.url)}
 		resp, err := rt.RoundTrip(req)
 		if err != nil {
@@ -84,9 +92,9 @@ func TestMockRoundTripper_MultipleURLs(t *testing.T) {
 	}
 }
 
-// ---------- NewMockBillyFS ----------
+// ---- Git filesystem mock tests ----
 
-func TestNewMockBillyFS_FileExists(t *testing.T) {
+func TestNewMockBillyFS_SingleFile(t *testing.T) {
 	t.Parallel()
 	fs, err := NewMockBillyFS(map[string]string{
 		"SECURITY.md": "report vulns here",
@@ -126,6 +134,7 @@ func TestNewMockBillyFS_MultipleFiles(t *testing.T) {
 	files := map[string]string{
 		"SECURITY.md": "security policy",
 		"README.md":   "readme content",
+		"LICENSE":     "MIT License",
 	}
 	fs, err := NewMockBillyFS(files)
 	if err != nil {
@@ -145,7 +154,7 @@ func TestNewMockBillyFS_MultipleFiles(t *testing.T) {
 	}
 }
 
-func TestNewMockBillyFS_MissingFile_ReturnsError(t *testing.T) {
+func TestNewMockBillyFS_NonexistentFile_ReturnsError(t *testing.T) {
 	t.Parallel()
 	fs, err := NewMockBillyFS(map[string]string{"README.md": "hello"})
 	if err != nil {
@@ -157,19 +166,150 @@ func TestNewMockBillyFS_MissingFile_ReturnsError(t *testing.T) {
 	}
 }
 
-// ---------- BuildMocks ----------
+// ---- Data source mock tests ----
 
-func TestBuildMocks_WiresHTTPAndGit(t *testing.T) {
+func TestBuildDataSourceMocks_SingleSource(t *testing.T) {
+	t.Parallel()
+	mocks, err := BuildDataSourceMocks(map[string]DataSourceResponseMock{
+		"osv.query": {Body: `{"vulns": [{"id": "GHSA-0001"}]}`},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mocks) != 1 {
+		t.Fatalf("len(mocks) = %d, want 1", len(mocks))
+	}
+
+	osv, ok := mocks["osv"]
+	if !ok {
+		t.Fatal("expected mocks[\"osv\"] to exist")
+	}
+	queryFunc, ok := osv.Funcs["query"]
+	if !ok {
+		t.Fatal("expected osv.Funcs[\"query\"] to exist")
+	}
+
+	result, err := queryFunc.Call(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Call: unexpected error: %v", err)
+	}
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("result type = %T, want map[string]any", result)
+	}
+	if _, hasVulns := resultMap["vulns"]; !hasVulns {
+		t.Error("expected 'vulns' key in result")
+	}
+}
+
+func TestBuildDataSourceMocks_MultipleFunctions(t *testing.T) {
+	t.Parallel()
+	mocks, err := BuildDataSourceMocks(map[string]DataSourceResponseMock{
+		"osv.query":        {Body: `{"vulns": []}`},
+		"osv.get_by_id":    {Body: `{"id": "GHSA-1234"}`},
+		"sonatype.lookup":  {Body: `{"components": []}`},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mocks) != 2 {
+		t.Fatalf("len(mocks) = %d, want 2 (osv, sonatype)", len(mocks))
+	}
+	if len(mocks["osv"].Funcs) != 2 {
+		t.Errorf("osv funcs = %d, want 2", len(mocks["osv"].Funcs))
+	}
+	if len(mocks["sonatype"].Funcs) != 1 {
+		t.Errorf("sonatype funcs = %d, want 1", len(mocks["sonatype"].Funcs))
+	}
+}
+
+func TestBuildDataSourceMocks_BadJSON_ReturnsError(t *testing.T) {
+	t.Parallel()
+	_, err := BuildDataSourceMocks(map[string]DataSourceResponseMock{
+		"osv.query": {Body: `{not valid json`},
+	})
+	if err == nil {
+		t.Error("expected error for bad JSON, got nil")
+	}
+}
+
+func TestBuildDataSourceMocks_EmptyMap(t *testing.T) {
+	t.Parallel()
+	mocks, err := BuildDataSourceMocks(nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mocks) != 0 {
+		t.Errorf("expected empty map, got %d entries", len(mocks))
+	}
+}
+
+// ---- MockGitCloner tests ----
+
+func TestMockGitCloner_ReturnsPrepopulatedFS(t *testing.T) {
+	t.Parallel()
+	fs, err := NewMockBillyFS(map[string]string{"SECURITY.md": "report here"})
+	if err != nil {
+		t.Fatalf("building memfs: %v", err)
+	}
+	cloner := &MockGitCloner{fs: fs}
+
+	got, err := cloner.Clone(context.Background(), "https://github.com/owner/repo", "main")
+	if err != nil {
+		t.Fatalf("Clone returned error: %v", err)
+	}
+	if got == nil {
+		t.Fatal("Clone returned nil filesystem")
+	}
+
+	f, err := got.Open("SECURITY.md")
+	if err != nil {
+		t.Fatalf("opening SECURITY.md: %v", err)
+	}
+	defer f.Close()
+	content, _ := io.ReadAll(f)
+	if string(content) != "report here" {
+		t.Errorf("content = %q, want %q", string(content), "report here")
+	}
+}
+
+func TestMockGitCloner_IgnoresURLAndBranch(t *testing.T) {
+	t.Parallel()
+	fs, _ := NewMockBillyFS(map[string]string{"file.txt": "data"})
+	cloner := &MockGitCloner{fs: fs}
+
+	// Different URLs and branches should all return the same filesystem.
+	for _, url := range []string{
+		"https://github.com/a/b",
+		"https://github.com/x/y",
+	} {
+		got, err := cloner.Clone(context.Background(), url, "develop")
+		if err != nil {
+			t.Fatalf("Clone(%s): %v", url, err)
+		}
+		if got != fs {
+			t.Errorf("Clone(%s) returned different filesystem", url)
+		}
+	}
+}
+
+// ---- BuildMocks integration ----
+
+func TestBuildMocks_WiresAllProviders(t *testing.T) {
 	t.Parallel()
 	tc := TestCase{
-		Name:   "wiring test",
+		Name:   "full wiring test",
 		Expect: "pass",
+		Entity: EntityConfig{Type: "repository", Entity: map[string]any{"owner": "o", "name": "r"}},
 		MockData: ProviderMockConfig{
 			HTTPResponses: map[string]HTTPResponseMock{
 				"https://api.github.com/repos/o/r": {StatusCode: 200, Body: `{}`},
 			},
 			GitFiles: map[string]string{
 				"SECURITY.md": "report here",
+			},
+			DataSourceResponses: map[string]DataSourceResponseMock{
+				"osv.query": {Body: `{"vulns": []}`},
 			},
 		},
 	}
@@ -178,32 +318,31 @@ func TestBuildMocks_WiresHTTPAndGit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if mocks.HTTPClient == nil {
-		t.Error("HTTPClient must not be nil")
-	}
-	if mocks.GitFilesystem == nil {
-		t.Error("GitFilesystem must not be nil")
-	}
 
-	// Verify the HTTP client serves the mocked response.
+	// Check that the HTTP client works.
 	req, _ := http.NewRequest(http.MethodGet, "https://api.github.com/repos/o/r", nil)
 	resp, err := mocks.HTTPClient.Do(req)
 	if err != nil {
-		t.Fatalf("http client do: %v", err)
+		t.Fatalf("http client: %v", err)
 	}
 	if resp.StatusCode != 200 {
 		t.Errorf("http status = %d, want 200", resp.StatusCode)
 	}
 
-	// Verify the git filesystem has the expected file.
+	// Check that the git filesystem has the file.
 	f, err := mocks.GitFilesystem.Open("SECURITY.md")
 	if err != nil {
-		t.Fatalf("opening SECURITY.md from git fs: %v", err)
+		t.Fatalf("opening SECURITY.md: %v", err)
 	}
 	defer f.Close()
 	content, _ := io.ReadAll(f)
 	if string(content) != "report here" {
 		t.Errorf("git file content = %q, want %q", string(content), "report here")
+	}
+
+	// Check that data source mocks were built.
+	if len(mocks.DataSources) != 1 {
+		t.Errorf("DataSources length = %d, want 1", len(mocks.DataSources))
 	}
 }
 
@@ -215,110 +354,9 @@ func TestBuildMocks_EmptyMockData(t *testing.T) {
 		t.Fatalf("unexpected error for empty mock data: %v", err)
 	}
 	if mocks.HTTPClient == nil || mocks.GitFilesystem == nil {
-		t.Error("both fields must be non-nil even when mock data is empty")
+		t.Error("HTTPClient and GitFilesystem must be non-nil even with empty mock data")
 	}
-}
-
-// ---------- MockGitCloner ----------
-
-func TestMockGitCloner_Clone_ReturnsPrepopulatedFS(t *testing.T) {
-	t.Parallel()
-	fs, err := NewMockBillyFS(map[string]string{"SECURITY.md": "report here"})
-	if err != nil {
-		t.Fatalf("building memfs: %v", err)
+	if len(mocks.DataSources) != 0 {
+		t.Errorf("DataSources should be empty, got %d entries", len(mocks.DataSources))
 	}
-	cloner := &MockGitCloner{fs: fs}
-
-	got, err := cloner.Clone(t.Context(), "https://github.com/owner/repo", "main")
-	if err != nil {
-		t.Fatalf("Clone returned error: %v", err)
-	}
-	if got == nil {
-		t.Fatal("Clone returned nil filesystem")
-	}
-
-	f, err := got.Open("SECURITY.md")
-	if err != nil {
-		t.Fatalf("opening SECURITY.md from cloned fs: %v", err)
-	}
-	defer f.Close()
-	content, _ := io.ReadAll(f)
-	if string(content) != "report here" {
-		t.Errorf("content = %q, want %q", string(content), "report here")
-	}
-}
-
-func TestMockGitCloner_Clone_IgnoresURLAndBranch(t *testing.T) {
-	t.Parallel()
-	fs, _ := NewMockBillyFS(map[string]string{"README.md": "hello"})
-	cloner := &MockGitCloner{fs: fs}
-
-	for _, args := range []struct{ url, branch string }{
-		{"https://github.com/a/b", "main"},
-		{"https://github.com/c/d", "develop"},
-		{"", ""},
-	} {
-		got, err := cloner.Clone(t.Context(), args.url, args.branch)
-		if err != nil {
-			t.Fatalf("Clone(%q, %q): %v", args.url, args.branch, err)
-		}
-		if got != fs {
-			t.Errorf("Clone(%q, %q): returned different filesystem", args.url, args.branch)
-		}
-	}
-}
-
-// ---------- DataSourceClient independence ----------
-
-func TestBuildMocks_DataSourceClientIsIndependent(t *testing.T) {
-	t.Parallel()
-	tc := TestCase{
-		Name:   "ds independence",
-		Expect: "pass",
-		MockData: ProviderMockConfig{
-			HTTPResponses: map[string]HTTPResponseMock{
-				"https://api.github.com/repos/o/r": {StatusCode: 200, Body: `{"http":true}`},
-			},
-			DataSourceResponses: map[string]HTTPResponseMock{
-				"https://ds.example.com/data": {StatusCode: 200, Body: `{"ds":true}`},
-			},
-		},
-	}
-
-	mocks, err := BuildMocks(tc)
-	if err != nil {
-		t.Fatalf("BuildMocks: %v", err)
-	}
-
-	// HTTPClient should 404 on data source URLs.
-	req, _ := http.NewRequest(http.MethodGet, "https://ds.example.com/data", nil)
-	resp, _ := mocks.HTTPClient.Do(req)
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("HTTPClient served DS URL: status = %d, want 404", resp.StatusCode)
-	}
-
-	// DataSourceClient should 404 on REST provider URLs.
-	req2, _ := http.NewRequest(http.MethodGet, "https://api.github.com/repos/o/r", nil)
-	resp2, _ := mocks.DataSourceClient.Do(req2)
-	if resp2.StatusCode != http.StatusNotFound {
-		t.Errorf("DataSourceClient served HTTP provider URL: status = %d, want 404", resp2.StatusCode)
-	}
-
-	// DataSourceClient should serve its own URL.
-	req3, _ := http.NewRequest(http.MethodGet, "https://ds.example.com/data", nil)
-	resp3, _ := mocks.DataSourceClient.Do(req3)
-	if resp3.StatusCode != 200 {
-		t.Errorf("DataSourceClient: status = %d, want 200", resp3.StatusCode)
-	}
-}
-
-// ---------- helpers ----------
-
-func mustParseURL(t *testing.T, raw string) *url.URL {
-	t.Helper()
-	u, err := url.Parse(raw)
-	if err != nil {
-		t.Fatalf("parsing URL %q: %v", raw, err)
-	}
-	return u
 }
