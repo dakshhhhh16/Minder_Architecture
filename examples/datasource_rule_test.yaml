@@ -1,0 +1,42 @@
+version: v1
+rule_name: osv_vulnerabilities
+test_cases:
+  - name: "Fail when a vulnerable dependency is found"
+    expect: fail
+    def: {}
+    params: {}
+    entity:
+      type: repository
+      entity:
+        owner: "testowner"
+        name: "testrepo"
+    mock_data:
+      data_source_responses:
+        "osv.query":
+          body: '{"vulns": [{"id": "GHSA-test-0001", "summary": "Critical vuln in example-lib"}]}'
+
+  - name: "Pass when no vulnerabilities are found"
+    expect: pass
+    def: {}
+    params: {}
+    entity:
+      type: repository
+      entity:
+        owner: "testowner"
+        name: "testrepo"
+    mock_data:
+      data_source_responses:
+        "osv.query":
+          body: '{"vulns": []}'
+
+  - name: "Error when data source is misconfigured"
+    expect: error
+    error_contains: "data source not registered"
+    def: {}
+    params: {}
+    entity:
+      type: repository
+      entity:
+        owner: "testowner"
+        name: "testrepo"
+    mock_data: {}

@@ -1,0 +1,34 @@
+version: v1
+rule_name: secret_scanning
+test_cases:
+  - name: "Pass when secret scanning is enabled"
+    expect: pass
+    def:
+      enabled: true
+    params: {}
+    entity:
+      type: repository
+      entity:
+        owner: "testowner"
+        name: "testrepo"
+    mock_data:
+      http_responses:
+        "https://api.github.com/repos/testowner/testrepo":
+          status_code: 200
+          body: '{"security_and_analysis": {"secret_scanning": {"status": "enabled"}}}'
+
+  - name: "Fail when secret scanning is disabled"
+    expect: fail
+    def:
+      enabled: true
+    params: {}
+    entity:
+      type: repository
+      entity:
+        owner: "testowner"
+        name: "testrepo"
+    mock_data:
+      http_responses:
+        "https://api.github.com/repos/testowner/testrepo":
+          status_code: 200
+          body: '{"security_and_analysis": {"secret_scanning": {"status": "disabled"}}}'
