@@ -1,7 +1,14 @@
-module github.com/dakshhhhh16/Minder_Architecture
+module github.com/dakshpathak/minder-rule-testing
 
 go 1.24.0
 
-require gopkg.in/yaml.v3 v3.0.1
+require (
+	github.com/go-git/go-billy/v5 v5.8.0
+	github.com/spf13/cobra v1.8.1
+	gopkg.in/yaml.v3 v3.0.1
+)
 
-require github.com/go-git/go-billy/v5 v5.8.0
+require (
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/spf13/pflag v1.0.5 // indirect
+)
