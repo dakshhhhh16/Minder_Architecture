@@ -1,16 +1,12 @@
 # Minder Rule Testing Framework
 
-A working prototype of the offline rule testing framework for Minder, built for the LFX Mentorship program (Summer 2026).
+A working prototype for offline rule testing in [Minder](https://github.com/mindersec/minder), built as part of my LFX Mentorship application (Summer 2026).
 
-## The Problem
+## What does this prototype do?
 
-Right now, testing a Minder rule requires a live GitHub token and real network calls. You need to set up three separate files (rule-type YAML, entity YAML, profile YAML), grab a token, and hope the API does not rate limit you. This makes tests slow, flaky, and painful to write. As a result, only 11 out of 63+ rules have any test coverage today, and the 6 Data Source rules (OSV, Sonatype, OpenSSF Bestpractices, etc.) have zero coverage because they do not even make HTTP calls at ingestion time.
+It lets you test any Minder rule by writing one YAML file. No GitHub token, no internet, everything runs from memory.
 
-## What This Project Does
-
-This framework lets anyone test a Minder rule by writing a single YAML fixture file and running `go test`. No internet required, no tokens, everything runs from memory.
-
-You write something like this:
+Here's what a test looks like for a REST rule:
 
 ```yaml
 version: v1
@@ -18,13 +14,10 @@ rule_name: secret_scanning
 test_cases:
   - name: "Pass when secret scanning is enabled"
     expect: pass
-    def:
-      enabled: true
+    def: { enabled: true }
     entity:
       type: repository
-      entity:
-        owner: "testowner"
-        name: "testrepo"
+      entity: { owner: "testowner", name: "testrepo" }
     mock_data:
       http_responses:
         "https://api.github.com/repos/testowner/testrepo":
@@ -32,158 +25,137 @@ test_cases:
           body: '{"security_and_analysis": {"secret_scanning": {"status": "enabled"}}}'
 ```
 
-And the framework handles the rest. It builds offline mocks, validates everything, and (once integrated into Minder) runs the actual rule engine against your fixture data.
-
-## How It Works
-
-Minder has three kinds of rules, and each one talks to the outside world differently. This framework intercepts each of those paths with a mock layer so nothing ever hits the network:
-
-**REST API rules** (like `branch_protection`, `secret_scanning`) make HTTP calls to the GitHub API. We replace the HTTP transport with a `MockRoundTripper` that returns whatever responses you put in the fixture. In Minder, this plugs in through `TestKit.WithHTTP()`.
-
-**Git file rules** (like checking for `SECURITY.md` or `LICENSE`) clone a repository and read files from it. We replace the real filesystem with an in-memory `billy.Filesystem` populated from the fixture's `git_files` map. No actual clone happens.
-
-**Data Source rules** (like `osv_vulnerabilities`, `sonatype_oss_index`) are the interesting part and the core of this project. These rules do NOT make HTTP calls at ingestion time. Instead, they register Rego built-in functions that fire inside the OPA evaluator during policy evaluation. The call path looks like:
-
-```
-Rego policy
-  -> calls minder.datasource.osv.query(args)
-  -> which is a rego.Function1 registered by buildFromDataSource()
-  -> which calls DataSourceFuncDef.Call()
-  -> which makes the actual REST call to the OSV API
-```
-
-We intercept at `DataSourceFuncDef.Call()` because that is the narrowest seam between the Rego engine and any real I/O. Our `MockDataSourceFuncDef` implements that interface and returns canned fixture data. The engine has no idea it is talking to a fake, and zero network calls happen.
-
-In the fixture, data source mocks use the `"name.func"` key format:
+And here's one for a Data Source rule (the part that doesn't exist in Minder today):
 
 ```yaml
-mock_data:
-  data_source_responses:
-    "osv.query":
-      body: '{"vulns": [{"id": "GHSA-test-0001"}]}'
+version: v1
+rule_name: osv_vulnerabilities
+test_cases:
+  - name: "Fail when a vulnerable dependency is found"
+    expect: fail
+    mock_data:
+      data_source_responses:
+        "osv.query":
+          body: '{"vulns": [{"id": "GHSA-test-0001"}]}'
 ```
 
-## Project Structure
+The framework parses the fixture, builds the right mock for each rule type, and validates everything. Once integrated into Minder, it will run the actual rule engine against your fixture data.
+
+## How the mocking works
+
+Minder rules talk to the outside world in three different ways. Each one needs a different mock:
+
+**REST rules** (like `branch_protection`, `secret_scanning`) make HTTP calls to the GitHub API. The mock replaces the HTTP transport with a `MockRoundTripper` that returns whatever you put in the fixture under `http_responses`.
+
+**Git rules** (like checking for `SECURITY.md` or `LICENSE`) clone a repo and read files. The mock replaces the repo filesystem with an in-memory `billy.Filesystem` built from the fixture's `git_files` map.
+
+**Data Source rules** (like `osv_vulnerabilities`, `sonatype_oss_index`) are the tricky ones. During evaluation, the Rego policy calls something like `minder.datasource.osv.query(args)`. That call goes through `DataSourceFuncDef.Call()` in Minder's data source layer. The mock implements that exact interface and returns canned data. The engine can't tell the difference, and nothing ever hits the network.
+
+The mock mirrors all four methods from the real `DataSourceFuncDef` interface:
+
+```go
+type MockDataSourceFuncDef struct{ Response any }
+
+func (m *MockDataSourceFuncDef) Call(_ context.Context, _ any, _ any) (any, error) {
+    return m.Response, nil
+}
+func (m *MockDataSourceFuncDef) ValidateArgs(_ any) error    { return nil }
+func (m *MockDataSourceFuncDef) ValidateUpdate(_ any) error  { return nil }
+func (m *MockDataSourceFuncDef) GetArgsSchema() any          { return nil }
+```
+
+In Minder, these get registered in a `DataSourceRegistry` and injected into the engine through `options.WithDataSources()`. The Rego evaluator picks them up and uses them as built-in functions during policy evaluation.
+
+## Project structure
 
 ```
 minder_prototype/
-├── main.go                          # CLI entry point
+├── main.go                       # entry point
 ├── cmd/
-│   ├── root.go                      # Root command setup (cobra)
-│   └── test.go                      # test and dryrun subcommands
-├── pkg/
-│   └── testing/
-│       ├── fixture.go               # YAML parser and schema validation
-│       ├── fixture_test.go          # Parser tests (18 tests)
-│       ├── mocks.go                 # HTTP, Git, and Data Source mocks
-│       ├── mocks_test.go            # Mock tests (20 tests)
-│       ├── runner.go                # DryRun validator + Evaluate entry point
-│       └── runner_test.go           # DryRun/Evaluate tests (12 tests)
-├── examples/
-│   ├── rest_rule_test.yaml          # REST API rule fixture (secret_scanning)
-│   ├── git_rule_test.yaml           # Git file rule fixture (osps-vm-05)
-│   └── datasource_rule_test.yaml   # Data Source rule fixture (osv_vulnerabilities)
-├── go.mod
-├── implementation_plan.txt          # Detailed 12-week plan
-├── Minder_proposal.md               # LFX mentorship proposal
-├── project.txt                      # Program overview
-├── whyme.txt                        # Background and motivation
-└── README.md                        # You are here
+│   ├── root.go                   # cobra root command
+│   └── test.go                   # test + dryrun subcommands
+├── pkg/testing/
+│   ├── fixture.go                # YAML parser + validation
+│   ├── fixture_test.go           # 18 tests
+│   ├── mocks.go                  # HTTP, Git, Data Source mocks
+│   ├── mocks_test.go             # 20 tests
+│   ├── runner.go                 # DryRun + Evaluate
+│   └── runner_test.go            # 12 tests
+└── examples/
+    ├── rest_rule_test.yaml       # secret_scanning fixture
+    ├── git_rule_test.yaml        # osps-vm-05 fixture
+    └── datasource_rule_test.yaml # osv_vulnerabilities fixture
 ```
 
-## Running the Tests
+## Running the tests
 
 ```bash
-cd minder_prototype
-
-# Run all tests
+# all tests (50 tests, zero network calls)
 go test ./... -v -count=1 -race
 
-# Run just the fixture parser tests
+# just the parser
 go test ./pkg/testing/ -run TestParse -v
 
-# Run just the mock tests
+# just the mocks
 go test ./pkg/testing/ -run TestMock -v
-go test ./pkg/testing/ -run TestBuild -v
 
-# Run the DryRun/Evaluate tests
+# just the runner
 go test ./pkg/testing/ -run TestDryRun -v
-go test ./pkg/testing/ -run TestEvaluate -v
 ```
-
-All 50 tests pass with zero network calls.
 
 ## Using the CLI
 
 ```bash
-# Build the CLI tool
 go build -o minder-test
 
-# Run full evaluation on a fixture
-./minder-test test examples/rest_rule_test.yaml
+# validate a fixture
+./minder-test dryrun examples/rest_rule_test.yaml
 
-# Run dry-run validation only (fast, no engine)
-./minder-test dryrun examples/git_rule_test.yaml
+# run tests (currently runs DryRun, full engine comes after Minder integration)
+./minder-test test examples/datasource_rule_test.yaml
 ```
 
-The CLI currently runs DryRun validation (checks fixture structure, mock data integrity, URL validity). Full engine evaluation will be wired in once the framework is integrated into Minder's codebase and has access to `rtengine.NewRuleTypeEngine()`.
+## What the fixture format supports
 
-## How This Fits Into Minder
+Each fixture tests one rule with multiple cases. A test case has:
 
-The framework extends Minder's existing TestKit (`pkg/testkit/v1/`) rather than replacing it. Here is what plugs in where:
+- **name**: what the case is testing
+- **expect**: `pass`, `fail`, or `error`
+- **def / params**: rule definition and parameter overrides
+- **entity**: the thing being evaluated (usually a repository with owner + name)
+- **mock_data**: fake responses for HTTP, Git files, or Data Sources
 
-| Rule Type | What Gets Mocked | Fixture Section | Minder Integration Point |
-|-----------|------------------|-----------------|--------------------------|
-| REST API | HTTP transport | `http_responses` | `TestKit.WithHTTP(mockRoundTripper)` |
-| Git files | Repository filesystem | `git_files` | `TestKit.WithGitDir()` or `rte.WithCustomIngester()` |
-| Data Source | Rego built-in functions | `data_source_responses` | `DataSourceRegistry` via `options.WithDataSources()` |
-
-The existing `rules_test.go` in `minder-rules-and-profiles` already uses TestKit for REST and Git rules. This framework adds the missing Data Source support and wraps everything in a single fixture file format so non-Go developers can write tests too.
-
-## The Fixture Format
-
-A fixture has three sections: the rule name, and a list of test cases. Each test case provides:
-
-- **name**: A human readable description of what this case tests
-- **expect**: What should happen ("pass", "fail", or "error")
-- **def**: Rule definition overrides (maps to `RuleTypeEngine.Eval()` def parameter)
-- **params**: Rule parameters (maps to `RuleTypeEngine.Eval()` params parameter)
-- **entity**: The entity to evaluate against (type + fields like owner/name)
-- **mock_data**: The fake data for HTTP, Git, or Data Source providers
-
-For cases that cannot be tested yet (like rules that need git commit history), you can use `skip_reason` to document why:
+You can skip cases that can't be tested yet:
 
 ```yaml
-test_cases:
-  - name: "Needs commit history"
-    skip_reason: "requires git commit history, memfs does not support this yet"
+- name: "Needs commit history"
+  skip_reason: "memfs doesn't support git log yet"
 ```
 
-For cases where the engine itself should error (not just fail), use `expect: error` with `error_contains`:
+Or test that the engine itself errors:
 
 ```yaml
-test_cases:
-  - name: "Missing data source should error"
-    expect: error
-    error_contains: "data source not registered"
-    entity:
-      type: repository
-      entity: {}
-    mock_data: {}
+- name: "Missing data source"
+  expect: error
+  error_contains: "data source not registered"
 ```
 
-## What Happens Next
+## How this fits into Minder
 
-This prototype demonstrates the fixture format, all three mock layers, and the validation pipeline. The next steps in the 12-week plan are:
+This extends Minder's existing TestKit, it doesn't replace it.
 
-1. Wire the mock layers into Minder's actual rule engine (`rtengine.NewRuleTypeEngine()`)
-2. Add the `--fixture` flag to the existing CLI at `cmd/dev/app/rule_type/rttst.go`
-3. Set up CI with two GitHub Actions jobs (fixture validation + full evaluation)
-4. Migrate existing rules to use the new fixture format (starting with REST, then Data Source, then Git history)
-5. Write the documentation (fixture format reference, migration guide, CLI docs)
+| Rule type | Mock | Fixture field | Minder hook |
+|-----------|------|---------------|-------------|
+| REST | `MockRoundTripper` | `http_responses` | `TestKit.WithHTTP()` |
+| Git | `NewMockBillyFS` | `git_files` | `TestKit.WithGitDir()` |
+| Data Source | `MockDataSourceFuncDef` | `data_source_responses` | `options.WithDataSources()` |
 
-The goal is to get from 24% rule coverage to 80%+ by the end of the mentorship, with every new rule getting at least one passing and one failing test case.
+## What's next
 
-## Why YAML Fixtures Instead of Go Table Tests
+This prototype proves the design works. The remaining work (covered in the 12-week plan):
 
-The people adding rules to `minder-rules-and-profiles` are not always Go developers. A YAML file that anyone can read and modify without touching Go code means tests actually get written when new rules land. That is the only way the coverage number stays above zero six months from now.
+1. Wire the mocks into Minder's actual rule engine
+2. Add `--fixture` flag to the existing CLI test command
+3. Set up CI with fixture validation + full evaluation
+4. Write fixtures for the 62 untested rules (starting with the 12 data source rules)
+5. Documentation
