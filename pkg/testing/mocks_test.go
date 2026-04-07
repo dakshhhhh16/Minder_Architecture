@@ -189,7 +189,7 @@ func TestBuildDataSourceMocks_SingleSource(t *testing.T) {
 		t.Fatal("expected osv.Funcs[\"query\"] to exist")
 	}
 
-	result, err := queryFunc.Call(context.Background(), nil)
+	result, err := queryFunc.Call(context.Background(), nil, nil)
 	if err != nil {
 		t.Fatalf("Call: unexpected error: %v", err)
 	}
@@ -205,9 +205,9 @@ func TestBuildDataSourceMocks_SingleSource(t *testing.T) {
 func TestBuildDataSourceMocks_MultipleFunctions(t *testing.T) {
 	t.Parallel()
 	mocks, err := BuildDataSourceMocks(map[string]DataSourceResponseMock{
-		"osv.query":        {Body: `{"vulns": []}`},
-		"osv.get_by_id":    {Body: `{"id": "GHSA-1234"}`},
-		"sonatype.lookup":  {Body: `{"components": []}`},
+		"osv.query":       {Body: `{"vulns": []}`},
+		"osv.get_by_id":   {Body: `{"id": "GHSA-1234"}`},
+		"sonatype.lookup": {Body: `{"components": []}`},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

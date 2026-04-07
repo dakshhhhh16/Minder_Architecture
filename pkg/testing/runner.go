@@ -90,7 +90,7 @@ func DryRun(fixturePath string) ([]Result, error) {
 //     e. Validate rule definition -> rte.GetRuleInstanceValidator().ValidateRuleDefAgainstSchema(tc.Def)
 //     f. Evaluate -> rte.Eval(ctx, entity, tc.Def, tc.Params, NewVoidResultSink())
 //     g. Check: "pass" means err == nil, "fail" means err != nil,
-//        "error" means err != nil and err.Error() contains tc.ErrorContains
+//     "error" means err != nil and err.Error() contains tc.ErrorContains
 //
 // In this prototype, we demonstrate step 1 (resolving the rule type path
 // on the filesystem) and then fall through to DryRun for the rest.

@@ -160,21 +160,42 @@ func (m *MockGitCloner) Clone(_ context.Context, _, _ string) (billy.Filesystem,
 // ---------------------------------------------------------------------------
 
 // MockDataSourceFuncDef implements the DataSourceFuncDef interface from
-// Minder's data source layer. It just returns whatever JSON was in the
-// fixture, parsed into a Go value.
+// Minder's data source layer (pkg/datasources/v1/datasources.go).
+// It returns whatever JSON was in the fixture, parsed into a Go value.
+//
+// The real interface has four methods:
+//   - ValidateArgs(obj any) error
+//   - ValidateUpdate(obj *structpb.Struct) error
+//   - Call(ctx context.Context, ingest *interfaces.Ingested, args any) (any, error)
+//   - GetArgsSchema() *structpb.Struct
+//
+// We mirror that shape here. The second argument to Call is the ingested
+// data that gets passed through during Rego evaluation. In tests we
+// ignore it since the canned response does not depend on it.
 type MockDataSourceFuncDef struct {
 	Response any // the parsed JSON from fixture body
 }
 
-// Call returns the fixture response. In the real interface this takes
-// (ctx, *interfaces.Ingested, args), but since we cannot import Minder
-// internals in the prototype, we simplify to (ctx, args).
-func (m *MockDataSourceFuncDef) Call(_ context.Context, _ any) (any, error) {
+// Call returns the fixture response. The ingest and args parameters are
+// ignored because the mock always returns the same canned data.
+// In the real codebase: Call(ctx, *interfaces.Ingested, args) (any, error)
+func (m *MockDataSourceFuncDef) Call(_ context.Context, _ any, _ any) (any, error) {
 	return m.Response, nil
 }
 
 // ValidateArgs always passes for test fixtures.
 func (m *MockDataSourceFuncDef) ValidateArgs(_ any) error {
+	return nil
+}
+
+// ValidateUpdate always passes for test fixtures.
+func (m *MockDataSourceFuncDef) ValidateUpdate(_ any) error {
+	return nil
+}
+
+// GetArgsSchema returns nil for test fixtures. In Minder this returns
+// a *structpb.Struct describing the expected input schema.
+func (m *MockDataSourceFuncDef) GetArgsSchema() any {
 	return nil
 }
 
@@ -194,20 +215,21 @@ func (m *MockDataSource) GetFuncs() map[string]*MockDataSourceFuncDef {
 // turns it into MockDataSource objects grouped by data source name.
 //
 // For example, a fixture with:
-//   data_source_responses:
-//     "osv.query":
-//       body: '{"vulns": []}'
+//
+//	data_source_responses:
+//	  "osv.query":
+//	    body: '{"vulns": []}'
 //
 // Produces a MockDataSource named "osv" with one function "query" that
 // returns {"vulns": []}.
 //
 // During Minder integration, these get registered in a DataSourceRegistry:
 //
-//   reg := v1datasources.NewDataSourceRegistry()
-//   for name, mockDS := range dsMocks {
-//       reg.RegisterDataSource(name, mockDS)
-//   }
-//   rte, _ := rtengine.NewRuleTypeEngine(ctx, rt, tk, options.WithDataSources(reg))
+//	reg := v1datasources.NewDataSourceRegistry()
+//	for name, mockDS := range dsMocks {
+//	    reg.RegisterDataSource(name, mockDS)
+//	}
+//	rte, _ := rtengine.NewRuleTypeEngine(ctx, rt, tk, options.WithDataSources(reg))
 func BuildDataSourceMocks(responses map[string]DataSourceResponseMock) (map[string]*MockDataSource, error) {
 	mocks := make(map[string]*MockDataSource)
 
